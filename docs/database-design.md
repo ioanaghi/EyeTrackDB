@@ -123,10 +123,10 @@ sql/
 
 ## Acceptance Criteria
 
-- [ ] ER diagram matches the implemented database.
-- [ ] Normalization to 3NF is explained and justified.
-- [ ] Primary and foreign key constraints are validated.
-- [ ] Schema tests execute successfully.
+- [x] ER diagram matches the implemented database.
+- [x] Normalization to 3NF is explained and justified.
+- [x] Primary and foreign key constraints are validated.
+- [x] Schema tests execute successfully.
 - [ ] ETL and automation changes are integrated.
 - [ ] Final Docker setup works on a clean environment.
 - [ ] Main README reflects the final implementation.
@@ -312,3 +312,59 @@ Validation on 2026-10-27: passed on the existing PostgreSQL 17 Docker database
 after migration and on a separate empty database (`eyetrackdb_schema_review`)
 created with the final create_tables.sql. Applying the migration after that fresh
 installation also succeeded, confirming it tolerates already-installed checks.
+
+
+## Task 5 — Integration progress and outstanding dependency
+
+Reviewed [Georgiana's PR #1](https://github.com/ioanaghi/EyeTrackDB/pull/1),
+merged into main on 2026-10-27, and its five task commits through f9bf888.
+The implementation retains the existing ETL column names and unique conflict
+targets, imports each file atomically, cleans values with source-aware errors,
+leaves unknown session metadata NULL and makes transformations repeatable.
+Integrated origin/feature/etl-pipeline into feature/database-design for validation.
+No changes were needed to the contributor's procedure to use the reviewed schema.
+
+Integration evidence on 2026-10-27:
+
+- Started the repository's PostgreSQL 17 Compose service with a temporary override
+  selecting an independent project/container, port 5434 and a newly created volume.
+  The original running database and volume were not replaced.
+- Installed create_tables.sql and 03_etl_transform.sql with ON_ERROR_STOP.
+- Ran scripts/import_csv.py with psycopg 3.3.6 on both local recordings: 71,005
+  rows and 32,865 rows, respectively.
+- Compared all 21 raw fields against both CSV sources in row order: all 103,870
+  staging rows match their original strings.
+- Ran CALL etl.run_pipeline(), then repeated the importer: both files were skipped.
+- Passed 01_schema_tests.sql on the populated database and 02_etl_tests.sql,
+  including two repeated transformations, both eyes per sample, exact converted
+  values, optional metadata, missing-eye recovery and rollback on malformed input.
+- Final persisted counts after test rollbacks: 2 files, 103,870 raw rows,
+  2 sessions, 103,870 gaze samples and 207,740 eye measurements.
+- Stopped the isolated integration container after verification. Its review volume
+  remains available; the principal development container remains running.
+- Updated README with schema installation/upgrade, Python requirements, CSV import,
+  manual transformation, test commands and the current automation limitation.
+
+Task 5 is **not complete**. The latest fetched origin/feature/automation still
+points at e3ab282 (task documentation only); docker/Dockerfile is empty and there
+is no automation PR available for review. pg_cron setup, scheduling, execution
+logging and automation tests have not been delivered. The current Compose image
+is postgres:17, so no scheduled execution or execution log was claimed or tested.
+The manual Docker/ETL path is verified from a new volume; the complete automated
+Docker environment and final setup instructions must be verified after Luca's
+implementation is available (or implementation of that scope is authorized).
+
+Remaining integration steps:
+
+1. Review and integrate Luca's automation PR, resolving its logging interface with
+   etl.run_pipeline() and updating Compose to the custom PostgreSQL 17 image.
+2. Build and start a clean complete environment, install the automation SQL in the
+   required order, then run schema, ETL and automation suites.
+3. Verify the active daily 02:00 job, explicit timezone, idempotent job setup,
+   execution logs and failure behavior; observe an actual scheduled execution.
+4. Recheck repeated pipeline execution and update the README to the final setup.
+5. Mark remaining acceptance criteria only after validation, push the completed
+   task 5, and create the single database-design PR targeting main.
+
+The task 5 progress commit records only the completed ETL integration and its
+checks. The final database-design PR remains uncreated until all tasks finish.
