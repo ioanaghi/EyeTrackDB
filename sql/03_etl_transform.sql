@@ -42,7 +42,8 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     INSERT INTO processed.sessions (import_file_id)
-    SELECT import_file_id FROM staging.import_files WHERE status = 'imported';
+    SELECT import_file_id FROM staging.import_files WHERE status = 'imported'
+    ON CONFLICT (import_file_id) DO NOTHING;
 
     INSERT INTO processed.gaze_samples
         (session_id, raw_id, system_timestamp, device_timestamp, callback_timestamp)
@@ -51,7 +52,9 @@ BEGIN
         etl.clean_value(r.device_time_stamp, r.raw_id, 'device_time_stamp', 'bigint')::bigint,
         to_timestamp(etl.clean_value(r.timestamp_utc, r.raw_id, 'timestamp_utc', 'timestamp')::double precision)
     FROM staging.raw_gaze_data r
-    JOIN processed.sessions s USING (import_file_id);
+    JOIN processed.sessions s USING (import_file_id)
+    WHERE NOT EXISTS (SELECT 1 FROM processed.gaze_samples g WHERE g.raw_id = r.raw_id)
+    ON CONFLICT (raw_id) DO NOTHING;
 
     INSERT INTO processed.eye_measurements
         (sample_id, eye, gaze_x, gaze_y, gaze_valid, pupil_diameter,
@@ -68,6 +71,10 @@ BEGIN
             etl.clean_value(r.left_gaze_origin_z, r.raw_id, 'left_gaze_origin_z', 'double precision')::double precision
         FROM staging.raw_gaze_data r
         JOIN processed.gaze_samples g USING (raw_id)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM processed.eye_measurements e
+            WHERE e.sample_id = g.sample_id AND e.eye = 'L'
+        )
     UNION ALL
     SELECT g.sample_id, 'R',
             etl.clean_value(r.right_gaze_x, r.raw_id, 'right_gaze_x', 'double precision')::double precision,
@@ -80,6 +87,11 @@ BEGIN
             etl.clean_value(r.right_gaze_origin_y, r.raw_id, 'right_gaze_origin_y', 'double precision')::double precision,
             etl.clean_value(r.right_gaze_origin_z, r.raw_id, 'right_gaze_origin_z', 'double precision')::double precision
         FROM staging.raw_gaze_data r
-        JOIN processed.gaze_samples g USING (raw_id);
+        JOIN processed.gaze_samples g USING (raw_id)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM processed.eye_measurements e
+            WHERE e.sample_id = g.sample_id AND e.eye = 'R'
+        )
+    ON CONFLICT (sample_id, eye) DO NOTHING;
 END;
 $$;

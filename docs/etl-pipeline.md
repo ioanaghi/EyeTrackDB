@@ -227,3 +227,11 @@ Invalid measurements are retained even when their validity indicator is false.
 Malformed integers, timestamps, booleans, nonnumeric values and infinities reject
 the whole transformation atomically, with an error identifying `raw_id`, column
 and original value. Staging values remain unchanged for investigation.
+
+### Task 4 — Repeatable execution
+
+Re-run the importer and `CALL etl.run_pipeline();` as needed. The existing unique
+constraints on filename, session source file, sample raw source and `(sample_id,
+eye)` enforce deduplication. Inserts use explicit conflict targets; already
+processed samples and eye measurements are skipped. Missing eye records can be
+filled on a later run. Existing processed values are not overwritten.
