@@ -159,14 +159,14 @@ docs/
 
 ## Acceptance Criteria
 
-- [ ] Both CSV files import successfully.
-- [ ] All original records are preserved in staging.
-- [ ] Invalid numeric measurements are handled correctly.
-- [ ] Session and eye measurement relationships are correct.
-- [ ] `etl.run_pipeline()` is implemented.
-- [ ] Repeated imports and transformations do not create duplicates.
-- [ ] SQL tests pass.
-- [ ] Import and transformation instructions are documented.
+- [x] Both CSV files import successfully.
+- [x] All original records are preserved in staging.
+- [x] Invalid numeric measurements are handled correctly.
+- [x] Session and eye measurement relationships are correct.
+- [x] `etl.run_pipeline()` is implemented.
+- [x] Repeated imports and transformations do not create duplicates.
+- [x] SQL tests pass.
+- [x] Import and transformation instructions are documented.
 
 ## Git Commands
 
@@ -180,3 +180,85 @@ git push origin feature/etl-pipeline
 Create a Pull Request targeting `main`.
 
 Do not modify the existing table definitions without coordinating with the database architect.
+
+## Running the implementation
+
+### Task 1 — Import
+
+Create the schemas and tables using the README setup instructions first.
+Run the importer on the host, where the container's `/data` mount is `./data`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install 'psycopg[binary]>=3,<4'
+export PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=eyetrackdb PGUSER=eyetrack
+read -s PGPASSWORD
+export PGPASSWORD
+.venv/bin/python scripts/import_csv.py --data-dir ./data
+```
+
+`--dsn` or `DATABASE_URL` can also configure the connection; `DATA_DIR`
+sets the default source directory. Each file is registered and copied in one
+transaction. Failed files are rolled back, other files continue, and any failure
+returns a nonzero exit code. Empty files, wrong headers, malformed CSV and wrong
+field counts are rejected. Numeric strings, including empty strings and `nan`,
+are preserved verbatim for transformation.
+
+Deduplication uses the unique filename. Modified content with the same filename
+is skipped too; filename-only deduplication does not detect content changes.
+Existing registrations are skipped rather than overwritten.
+
+### Task 2 — Transformation
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -f /sql/03_etl_transform.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -c 'CALL etl.run_pipeline();'
+```
+
+Each imported file produces one session, each raw row one gaze sample, and each
+sample two eye measurements. Optional session metadata remains unknown (`NULL`).
+Callback timestamps use `to_timestamp()` on Unix seconds; source links use `raw_id`.
+
+### Task 3 — Cleaning
+
+Empty numeric fields and case-insensitive `nan` become `NULL`, while zero remains
+zero. Validity accepts `0`/`1` and `false`/`true`; missing validity remains unknown.
+Invalid measurements are retained even when their validity indicator is false.
+Malformed integers, timestamps, booleans, nonnumeric values and infinities reject
+the whole transformation atomically, with an error identifying `raw_id`, column
+and original value. Staging values remain unchanged for investigation.
+
+### Task 4 — Repeatable execution
+
+Re-run the importer and `CALL etl.run_pipeline();` as needed. The existing unique
+constraints on filename, session source file, sample raw source and `(sample_id,
+eye)` enforce deduplication. Inserts use explicit conflict targets; already
+processed samples and eye measurements are skipped. Missing eye records can be
+filled on a later run. Existing processed values are not overwritten.
+
+### Task 5 — Validation
+
+After importing both files and running the transformation:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -f /sql/tests/02_etl_tests.sql
+```
+
+The suite requires the complete initial dataset. It checks exact counts, source
+links, duplicate prevention, both eyes, timestamp conversion, all measurement and
+validity conversions, missing values, numeric zero, repeat execution, missing-eye
+recovery and atomic rejection of malformed timestamps and measurements. Synthetic
+fixtures run in a transaction that is rolled back; failure stops `psql` with a
+nonzero exit code. Run this suite without concurrent imports or transformations.
+
+Verified locally on PostgreSQL 16 with the two original CSV files: 2 imported
+files, 103,870 staging rows, 2 sessions, 103,870 gaze samples and 207,740 eye
+measurements. Every raw field was compared against the source CSV values.
+Repeated imports were skipped, and malformed headers, empty files, incorrect
+field counts and broken CSV quoting left no partial registrations or raw rows.
+Missing directories produced a nonzero exit code. The SQL suite passed.
+The configured Docker PostgreSQL 17 instance was unavailable during verification
+because Docker was not running; the commands above run the same suite there.
+
+Delivery uses one commit and push per task on `feature/etl-pipeline`. A single
+Pull Request targets `main` after all five tasks; no push or merge to `main`.
