@@ -208,3 +208,83 @@ An optional device, participant or task may serve many sessions. Samples may hav
 zero, one or two eye rows during loading; L/R and the composite primary key cap
 this relationship at two. ETL completion requires both eyes. No database CHECK
 requires two children, so the diagram explicitly distinguishes that postcondition.
+
+## Task 3 — Normalization from 1NF to 3NF
+
+### First normal form (1NF)
+
+Each column stores one scalar value and each row has a key. The source CSV uses
+separate left_* and right_* columns. This wide scalar layout need not formally
+violate 1NF, but repeats the same measurement structure for two eyes. Staging
+retains that representation for source fidelity. The processed representation
+unifies it as rows keyed by (sample_id, eye): a CSV sample with left_gaze_x=0.25
+and right_gaze_x=0.30 becomes (sample, L, 0.25) and (sample, R, 0.30).
+There are no lists of eye values in a cell. All other eye properties follow the
+same mapping. Unknown measurements remain SQL NULL; false validity and numeric
+zero remain meaningful scalar values.
+
+### Second normal form (2NF)
+
+A relation in 1NF is in 2NF when every non-prime attribute depends on the whole
+of each candidate key, with no dependency on a proper subset. In eye_measurements,
+(sample_id, eye) determines gaze_x, gaze_y, gaze_valid, pupil_diameter, pupil_valid,
+gaze_origin_valid and all three gaze origin coordinates. sample_id alone cannot
+determine them because left and right may differ; eye alone cannot determine
+them because recordings contain many samples. Session identifiers and shared
+timestamps belong to gaze_samples because they depend on the sample alone.
+
+All other relations have single-column candidate keys, so partial dependencies
+cannot arise. The functional dependencies under the current business rules are:
+
+- import_files: import_file_id or filename -> imported_at, row_count, status
+  and the remaining identifier.
+- raw_gaze_data: raw_id -> import_file_id and the 21 raw values. Timestamp
+  values are not assumed unique.
+- devices: device_id -> model, serial_number, sampling_rate_hz.
+- participants: participant_id or participant_code -> the other identifier.
+- tasks: task_id or task_name -> description and the other identifier.
+- sessions: session_id or import_file_id -> device_id, participant_id, task_id,
+  started_at, ended_at and the other identifier.
+- gaze_samples: sample_id or raw_id -> session_id, system_timestamp,
+  device_timestamp, callback_timestamp and the other identifier.
+
+Nullable serial_number is a conditional identifier when known, not a formal
+candidate key across all rows: PostgreSQL permits multiple NULLs in a UNIQUE
+column. It cannot be used to identify an unknown device. These dependencies
+assume a device row describes one configured sampling rate; historical changes
+would require separate configuration/version records if that becomes a need.
+
+### Third normal form (3NF)
+
+For the stated dependencies, each determinant of a nontrivial dependency is a
+candidate key (or the dependent attribute is prime). Non-key attributes do not
+determine other non-key attributes inside a relation. A session stores foreign
+keys rather than participant codes, device model/serial/rate or task names and
+descriptions. That metadata resides in its own parent relation, preventing a
+session -> device -> model dependency within the sessions table. Samples store
+session_id without duplicating session dates or participant details. Eye rows
+store sample_id without duplicating sample timestamps. This separation avoids
+transitive dependencies and repeated metadata across thousands of samples.
+
+Insertion anomaly prevented: a device or task can be registered before any
+recording exists, without inventing a sample or participant. A recording can
+also be loaded when participant/device/task information was not collected,
+because those session references are optional.
+
+Update anomaly prevented: changing a task description updates one tasks row,
+rather than each session or every eye measurement. All referencing sessions see
+the same metadata. Per-session dates remain on the session, so a correction is
+not repeated across its samples.
+
+Deletion anomaly prevented: removing an unreferenced task does not remove
+recordings; deleting a session's samples (explicitly deleting eyes first) does
+not erase the separately stored task, participant or device. Referenced parents
+cannot be deleted accidentally because FKs use NO ACTION. Removing a referenced
+file likewise fails rather than orphaning raw or processed records.
+
+Staging is intentionally a source archive rather than the analysis model.
+Its row_count is a stored import audit aggregate; equality with the number of
+raw rows is an ETL/integration invariant, not a row-local normalization rule.
+The processed relations meet 3NF for the documented dependencies. This claim
+does not imply completeness, exactly two eyes, filename content deduplication,
+or cross-file provenance correctness; those require the explicit ETL tests.
