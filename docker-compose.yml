@@ -1,0 +1,29 @@
+name: eyetrackdb
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: eyetrackdb-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: eyetrackdb
+      POSTGRES_USER: eyetrack
+      POSTGRES_PASSWORD: eyetrack_dev_password
+
+    ports:
+      - "127.0.0.1:5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data:/data:ro
+      - ./sql:/sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eyetrack -d eyetrackdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
