@@ -170,6 +170,23 @@ ORDER BY started_at DESC;
 `cron.job_run_details` describes the scheduled wrapper process; the execution
 log table is the source of truth for whether the ETL pipeline itself succeeded.
 
+## Task 7 — Automation Tests
+
+After installing the ETL procedure and applying all four automation SQL setup
+scripts, run the SQL test file as the database superuser:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  < sql/tests/03_automation_tests.sql
+```
+
+The test checks extension/database/timezone configuration, one active job with
+the expected schedule, access to scheduler history, manual ETL integration, and
+successful and failed execution logging. It uses valid and malformed synthetic
+rows to check commit and rollback behavior, then rolls its fixture and log rows
+back. It does not assert that a daily scheduled run has happened or succeeded;
+use `cron.job_run_details` to establish an observed scheduled execution.
+
 ## Task 6 — Manual Execution
 
 Run the ETL on demand from the repository root without waiting for 02:00:
