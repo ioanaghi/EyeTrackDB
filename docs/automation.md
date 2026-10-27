@@ -81,6 +81,16 @@ The job must be installed idempotently, without creating duplicate scheduled job
 
 The ETL procedure itself is implemented by Georgiana.
 
+`sql/05_schedule_jobs.sql` replaces any existing job named
+`eyetrackdb-daily-etl` before creating the single daily job. It runs
+`CALL etl.run_pipeline()` at 02:00 in the explicitly configured
+`Europe/Bucharest` timezone. The setup script must be run as a PostgreSQL
+superuser in `eyetrackdb` after the procedure is installed. Under current
+Bucharest daylight-saving rules, clock changes happen at 03:00/04:00, so this
+02:00 wall-clock schedule occurs once each local calendar day; its UTC time
+shifts by one hour between EET and EEST. Future time-zone rule changes follow
+the installed IANA time-zone data.
+
 ## Task 4 — ETL Execution Logging
 
 Create `sql/06_etl_logging.sql`.
