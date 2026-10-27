@@ -288,3 +288,27 @@ raw rows is an ETL/integration invariant, not a row-local normalization rule.
 The processed relations meet 3NF for the documented dependencies. This claim
 does not imply completeness, exactly two eyes, filename content deduplication,
 or cross-file provenance correctness; those require the explicit ETL tests.
+
+## Task 4 — Integrity test execution
+
+Run from the repository root after installing the reviewed schema or applying the
+migration to an existing installation:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/tests/01_schema_tests.sql
+```
+
+The script asserts all eight tables, exact PK column lists, and all eight FK
+mappings with validated constraints. It exercises invalid eye values, duplicate
+(sample_id, eye), all orphan FK paths, parent deletion protection, deduplication
+keys, metadata checks and NULL handling. Expected failures are caught in PL/pgSQL
+subtransactions and checked by SQLSTATE; an unexpectedly successful statement
+fails the suite. The outer transaction always rolls back on success, while
+ON_ERROR_STOP and connection closure roll back on failure. No fixture rows
+remain. Identity sequences may advance, as PostgreSQL sequences are not rolled
+back. Run in an isolated test database when sequence gaps matter.
+
+Validation on 2026-10-27: passed on the existing PostgreSQL 17 Docker database
+after migration and on a separate empty database (`eyetrackdb_schema_review`)
+created with the final create_tables.sql. Applying the migration after that fresh
+installation also succeeded, confirming it tolerates already-installed checks.
