@@ -97,129 +97,6 @@ The scheduler calls `etl.run_pipeline_logged()`, which delegates to
 
 ## Task 4 — ETL Execution Logging
 
-`sql/06_etl_logging.sql` creates `etl.execution_logs` and the logging wrapper
-`etl.run_pipeline_logged()`. The wrapper inserts a running record, invokes
-Georgiana's unchanged `etl.run_pipeline()`, then records end time, status, and
-the increase in `processed.gaze_samples` as `processed_records`. That count is
-the number of newly materialized samples, so an idempotent rerun may correctly
-report zero.
-
-PostgreSQL rolls back statements inside the wrapper's exception subtransaction
-when the ETL call fails. The wrapper catches that error, stores its SQLSTATE,
-message, detail, and hint in the outer execution log row, and emits a warning.
-The wrapper therefore returns normally after a logged failure; inspect
-`etl.execution_logs.status` to determine pipeline success. As with any normal
-transactional table, an outer transaction rollback or server failure before
-commit can still remove the log. `cron.job_run_details` independently records
-whether the scheduled wrapper invocation ran, but its success status does not
-replace the pipeline status in `etl.execution_logs`.
-
-The integration interface for Georgiana is to keep `etl.run_pipeline()` as the
-ETL entry point; automation invokes it through `etl.run_pipeline_logged()`.
-This avoids modifying or duplicating the ETL transformation.
-
-## Task 5 — Monitoring
-
-Check that the named job exists, is active, and see its most recent scheduler
-run:
-
-```sql
-SELECT j.jobid, j.jobname, j.schedule, j.command, j.active,
-       r.start_time AS last_started_at, r.end_time AS last_ended_at,
-       r.status AS last_scheduler_status, r.return_message
-FROM cron.job AS j
-LEFT JOIN LATERAL (
-    SELECT start_time, end_time, status, return_message
-    FROM cron.job_run_details
-    WHERE jobid = j.jobid
-    ORDER BY start_time DESC NULLS LAST
-    LIMIT 1
-) AS r ON true
-WHERE j.jobname = 'eyetrackdb-daily-etl';
-```
-
-Inspect recent scheduler history (including reported errors):
-
-```sql
-SELECT jobid, runid, database, username, command, status,
-       return_message, start_time, end_time
-FROM cron.job_run_details
-ORDER BY start_time DESC
-LIMIT 10;
-```
-
-Inspect pipeline-level results and failures recorded by the wrapper:
-
-```sql
-SELECT execution_id, pipeline_name, started_at, ended_at, status,
-       processed_records, error_detail
-FROM etl.execution_logs
-ORDER BY started_at DESC
-LIMIT 20;
-```
-
-Filter to pipeline failures:
-
-```sql
-SELECT execution_id, started_at, ended_at, error_detail
-FROM etl.execution_logs
-WHERE status = 'failed'
-ORDER BY started_at DESC;
-```
-
-`cron.job_run_details` describes the scheduled wrapper process; the execution
-log table is the source of truth for whether the ETL pipeline itself succeeded.
-
-## Task 7 — Automation Tests
-
-After installing the ETL procedure and applying all four automation SQL setup
-scripts, run the SQL test file as the database superuser:
-
-```bash
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
-  < sql/tests/03_automation_tests.sql
-```
-
-The test checks extension/database/timezone configuration, one active job with
-the expected schedule, access to scheduler history, manual ETL integration, and
-successful and failed execution logging. It uses valid and malformed synthetic
-rows to check commit and rollback behavior, then rolls its fixture and log rows
-back. It does not assert that a daily scheduled run has happened or succeeded;
-use `cron.job_run_details` to establish an observed scheduled execution.
-
-## Task 6 — Manual Execution
-
-Run the ETL on demand from the repository root without waiting for 02:00:
-
-```bash
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
-  -c 'CALL etl.run_pipeline();'
-```
-
-To also capture the run in `etl.execution_logs`, use the monitoring wrapper:
-
-```bash
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
-  -c 'CALL etl.run_pipeline_logged();'
-```
-
-For a logged run, verify the latest outcome and processed sample delta:
-
-```sql
-SELECT execution_id, started_at, ended_at, status,
-       processed_records, error_detail
-FROM etl.execution_logs
-ORDER BY execution_id DESC
-LIMIT 1;
-```
-
-The logged run succeeded only when its `status` is `succeeded`. A zero
-`processed_records` value can be expected on an idempotent run. For a direct
-`etl.run_pipeline()` call, verify the processed-table counts and inspect the
-PostgreSQL command result; direct calls do not write the wrapper's log row.
-
-## Task 4 — ETL Execution Logging
-
 Create `sql/06_etl_logging.sql`.
 
 Design a logging mechanism that records:
@@ -337,3 +214,129 @@ git push origin feature/automation
 Create a Pull Request targeting `main`.
 
 Coordinate with Georgiana before integrating the scheduled ETL procedure.
+
+
+## Implementation and operations
+
+### Task 4 — ETL Execution Logging
+
+`sql/06_etl_logging.sql` creates `etl.execution_logs` and the logging wrapper
+`etl.run_pipeline_logged()`. The wrapper inserts a running record, invokes
+Georgiana's unchanged `etl.run_pipeline()`, then records end time, status, and
+the increase in `processed.gaze_samples` as `processed_records`. That count is
+the number of newly materialized samples, so an idempotent rerun may correctly
+report zero.
+
+PostgreSQL rolls back statements inside the wrapper's exception subtransaction
+when the ETL call fails. The wrapper catches that error, stores its SQLSTATE,
+message, detail, and hint in the outer execution log row, and emits a warning.
+The wrapper therefore returns normally after a logged failure; inspect
+`etl.execution_logs.status` to determine pipeline success. As with any normal
+transactional table, an outer transaction rollback or server failure before
+commit can still remove the log. `cron.job_run_details` independently records
+whether the scheduled wrapper invocation ran, but its success status does not
+replace the pipeline status in `etl.execution_logs`.
+
+The integration interface for Georgiana is to keep `etl.run_pipeline()` as the
+ETL entry point; automation invokes it through `etl.run_pipeline_logged()`.
+This avoids modifying or duplicating the ETL transformation.
+
+### Task 5 — Monitoring queries
+
+Check that the named job exists, is active, and see its most recent scheduler
+run:
+
+```sql
+SELECT j.jobid, j.jobname, j.schedule, j.command, j.active,
+       r.start_time AS last_started_at, r.end_time AS last_ended_at,
+       r.status AS last_scheduler_status, r.return_message
+FROM cron.job AS j
+LEFT JOIN LATERAL (
+    SELECT start_time, end_time, status, return_message
+    FROM cron.job_run_details
+    WHERE jobid = j.jobid
+    ORDER BY start_time DESC NULLS LAST
+    LIMIT 1
+) AS r ON true
+WHERE j.jobname = 'eyetrackdb-daily-etl';
+```
+
+Inspect recent scheduler history (including reported errors):
+
+```sql
+SELECT jobid, runid, database, username, command, status,
+       return_message, start_time, end_time
+FROM cron.job_run_details
+ORDER BY start_time DESC
+LIMIT 10;
+```
+
+Inspect pipeline-level results and failures recorded by the wrapper:
+
+```sql
+SELECT execution_id, pipeline_name, started_at, ended_at, status,
+       processed_records, error_detail
+FROM etl.execution_logs
+ORDER BY started_at DESC
+LIMIT 20;
+```
+
+Filter to pipeline failures:
+
+```sql
+SELECT execution_id, started_at, ended_at, error_detail
+FROM etl.execution_logs
+WHERE status = 'failed'
+ORDER BY started_at DESC;
+```
+
+`cron.job_run_details` describes the scheduled wrapper process; the execution
+log table is the source of truth for whether the ETL pipeline itself succeeded.
+
+### Task 6 — Manual execution
+
+Run the ETL on demand from the repository root without waiting for 02:00:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  -c 'CALL etl.run_pipeline();'
+```
+
+To also capture the run in `etl.execution_logs`, use the monitoring wrapper:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  -c 'CALL etl.run_pipeline_logged();'
+```
+
+For a logged run, verify the latest outcome and processed sample delta:
+
+```sql
+SELECT execution_id, started_at, ended_at, status,
+       processed_records, error_detail
+FROM etl.execution_logs
+ORDER BY execution_id DESC
+LIMIT 1;
+```
+
+The logged run succeeded only when its `status` is `succeeded`. A zero
+`processed_records` value can be expected on an idempotent run. For a direct
+`etl.run_pipeline()` call, verify the processed-table counts and inspect the
+PostgreSQL command result; direct calls do not write the wrapper's log row.
+
+### Task 7 — Automation tests
+
+After installing the ETL procedure and applying all four automation SQL setup
+scripts, run the SQL test file as the database superuser:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  < sql/tests/03_automation_tests.sql
+```
+
+The test checks extension/database/timezone configuration, one active job with
+the expected schedule, access to scheduler history, manual ETL integration, and
+successful and failed execution logging. It uses valid and malformed synthetic
+rows to check commit and rollback behavior, then rolls its fixture and log rows
+back. It does not assert that a daily scheduled run has happened or succeeded;
+use `cron.job_run_details` to establish an observed scheduled execution.

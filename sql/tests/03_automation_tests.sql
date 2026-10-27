@@ -8,6 +8,7 @@ BEGIN;
 DO $$
 DECLARE
     matching_jobs integer;
+    history_rows bigint;
     scheduled_job_id bigint;
     latest_execution_id bigint;
     successful_file_id bigint;
@@ -49,6 +50,7 @@ BEGIN
     IF to_regclass('cron.job_run_details') IS NULL THEN
         RAISE EXCEPTION 'pg_cron execution history relation is unavailable';
     END IF;
+    SELECT count(*) INTO history_rows FROM cron.job_run_details;
 
     INSERT INTO staging.import_files (filename, row_count, status)
     VALUES ('__automation_success_' || txid_current(), 1, 'imported')
@@ -105,7 +107,8 @@ BEGIN
         RAISE EXCEPTION 'Failed pipeline left a partial processed sample';
     END IF;
 
-    RAISE NOTICE 'Automation tests passed. No scheduled run is claimed by this test.';
+    RAISE NOTICE 'Automation tests passed; % scheduler-history rows visible. No scheduled run is claimed by this test.',
+        history_rows;
 END;
 $$;
 
