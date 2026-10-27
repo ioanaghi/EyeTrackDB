@@ -33,7 +33,7 @@ The project focuses on relational database design, data integrity, normalization
 | Docker Compose | Containerized deployment |
 | Python | Dataset inspection and CSV ingestion |
 | SQL / PL/pgSQL | Database schema and data transformations |
-| pg_cron | Automated database jobs (planned) |
+| pg_cron | Daily ETL scheduling and execution history |
 | Git and GitHub | Version control and team collaboration |
 
 ## Dataset
@@ -80,7 +80,7 @@ Stores structured relational data.
 
 ### ETL Schema
 
-Contains the ETL cleaning function and transformation procedure. Job execution logs, scheduling, and monitoring are pending automation integration.
+Contains the ETL cleaning function, transformation and logging procedures, and execution logs. The pg_cron extension stores scheduling metadata and history in the cron schema.
 
 ### Data Processing Flow
 
@@ -133,7 +133,7 @@ cd EyeTrackDB
 ### 2. Start PostgreSQL
 
 ```bash
-docker compose up -d
+docker compose up -d --build --wait
 ```
 
 ### 3. Verify the container
@@ -142,7 +142,10 @@ docker compose up -d
 docker compose ps
 ```
 
-The PostgreSQL service should report a healthy status.
+The PostgreSQL service should report a healthy status. The image builds from
+PostgreSQL 17 Bookworm and installs pg_cron from PGDG, requiring internet access
+on the first build. Compose explicitly preloads pg_cron and selects eyetrackdb,
+Europe/Bucharest, and background workers, including on existing database volumes.
 
 ### 4. Connect to PostgreSQL
 
@@ -175,7 +178,23 @@ Review the reported rows before retrying; it does not rewrite source recordings.
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/03_etl_transform.sql
 ```
 
-### 7. Import the recordings
+### 7. Install logging and scheduling
+
+Apply the extension, logging wrapper, and schedule in this order:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/04_enable_pg_cron.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/06_etl_logging.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/05_schedule_jobs.sql
+```
+
+The single named job `eyetrackdb-daily-etl` runs at **02:00 Europe/Bucharest**
+(`0 2 * * *`). It invokes `etl.run_pipeline_logged()`, which calls the ETL and
+records the outcome. Reapplying the schedule replaces the named job without
+creating duplicates. Configuration changes require recreating the container with
+`docker compose up -d --build --wait`; keep the named data volume.
+
+### 8. Import the recordings
 
 Place the two Tobii CSV recordings in `data/`. Run the importer on the host; the
 PostgreSQL container sees the same directory at `/data`.
@@ -196,17 +215,18 @@ Each file is imported in one transaction. Failures return a nonzero exit code an
 roll back that file. Existing filenames are skipped, including files whose content
 changed under the same name; this is filename-based deduplication.
 
-### 8. Transform and validate
+### 9. Transform and validate
 
 ```bash
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -c 'CALL etl.run_pipeline();'
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -c 'CALL etl.run_pipeline_logged();'
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/tests/01_schema_tests.sql
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/tests/02_etl_tests.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb < sql/tests/03_automation_tests.sql
 ```
 
 The schema suite works with an empty or populated database. The ETL suite requires
 the complete original dataset: 2 files, 103,870 raw rows, 2 sessions, 103,870 gaze
-samples and 207,740 eye measurements. Both suites roll back their fixtures; identity
+samples and 207,740 eye measurements. All three suites roll back their fixtures; identity
 sequences can still advance. Use an isolated database for tests when that matters.
 
 Re-run the importer and procedure to confirm repeatability: the same filenames,
@@ -217,11 +237,30 @@ metadata remains NULL. See [ETL instructions](docs/etl-pipeline.md),
 [schema review and normalization](docs/database-design.md) and the
 [ER diagram source](docs/er-diagram.mmd).
 
-**Validated on 2026-10-27:** the schema and manual ETL were tested on a new
-PostgreSQL 17 Docker volume with both recordings, including repeated imports and
-transformations. The automation branch has no implementation yet. Daily scheduling,
-pg_cron history and execution logs remain pending integration; the current Compose
-service uses the standard PostgreSQL image and does not schedule jobs.
+### 10. Inspect scheduler and pipeline outcomes
+
+```bash
+docker compose exec -T postgres psql -U eyetrack -d eyetrackdb -c "SELECT jobid, jobname, schedule, active FROM cron.job;"
+docker compose exec -T postgres psql -U eyetrack -d eyetrackdb -c "SELECT jobid, status, return_message, start_time, end_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 10;"
+docker compose exec -T postgres psql -U eyetrack -d eyetrackdb -c "SELECT execution_id, status, processed_records, error_detail FROM etl.execution_logs ORDER BY execution_id DESC LIMIT 10;"
+```
+
+Check `etl.execution_logs.status` for the pipeline result. The wrapper catches
+ETL errors, rolls back partial ETL writes, stores a failure and returns a warning.
+Therefore a successful scheduler invocation or psql exit code alone does not mean
+the pipeline succeeded. The log persists when the outer transaction commits;
+an explicit outer ROLLBACK also removes it. `processed_records` counts newly added
+gaze samples, so a repeatable rerun can correctly report zero. Direct
+`CALL etl.run_pipeline()` remains available and raises errors directly, without
+writing the wrapper log. More queries and timezone details are in
+[automation operations](docs/automation.md).
+
+**Validated on 2026-10-27:** PostgreSQL 17 with pg_cron on a new Docker volume,
+complete CSV import, schema/ETL/automation suites, repeated imports and transforms,
+idempotent scheduling, persisted success/failure logs, and a real scheduler run
+using a temporary one-second smoke job. That test job was removed; the daily
+02:00 job remains configured. The 02:00 daily invocation itself was not awaited.
+The Docker image was built and tested on ARM64; AMD64 was not exercised locally.
 
 ### Stopping and restarting
 
@@ -231,9 +270,24 @@ docker compose up -d --wait
 ```
 
 The named volume preserves the database. Schema creation and ETL installation are
-explicit setup steps, so a new volume needs steps 5–8. Reuse the existing volume
+explicit setup steps, so a new volume needs steps 5–9. Reuse the existing volume
 without re-importing files. If port 5433 is occupied, adjust the host mapping in a
 local Compose override and set PGPORT to the matching host port.
+
+### Existing-volume collation compatibility
+
+A volume initialized by a different Linux distribution can report a collation
+version mismatch after switching to the Bookworm image. Before continuing normal
+use, rebuild the affected database indexes, then refresh the recorded version:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -c 'REINDEX DATABASE eyetrackdb;' -c 'ALTER DATABASE eyetrackdb REFRESH COLLATION VERSION;'
+```
+
+Perform this maintenance without concurrent application writes; reindexing may
+lock tables. Apply the same maintenance separately to any other database you
+retain that reports a mismatch. Do not merely refresh the version before rebuilding
+the indexes. A fresh volume created with the final image needs no such step.
 
 ## Development Team
 
@@ -281,11 +335,11 @@ All changes should be reviewed and tested before merging.
 - [x] Validate data quality and prevent duplicate imports
 - [x] Document normalization to 3NF
 - [x] Create an Entity-Relationship diagram
-- [ ] Configure automated scheduling using pg_cron
-- [ ] Implement ETL execution logging
+- [x] Configure automated scheduling using pg_cron
+- [x] Implement ETL execution logging
 - [x] Add SQL validation and integration tests
-- [ ] Perform end-to-end testing
-- [ ] Complete final project documentation
+- [x] Perform end-to-end testing
+- [x] Complete final project documentation
 
 ## Data Privacy
 

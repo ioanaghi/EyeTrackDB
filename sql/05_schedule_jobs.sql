@@ -1,7 +1,8 @@
 \set ON_ERROR_STOP on
 
 -- Run as a PostgreSQL superuser in eyetrackdb after installing pg_cron and
--- applying the ETL procedure (sql/03_etl_transform.sql).
+-- applying the ETL procedure and logging wrapper:
+-- sql/03_etl_transform.sql, then sql/06_etl_logging.sql.
 DO $$
 DECLARE
     existing_job_id bigint;

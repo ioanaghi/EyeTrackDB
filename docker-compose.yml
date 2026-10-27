@@ -2,9 +2,25 @@ name: eyetrackdb
 
 services:
   postgres:
-    image: postgres:17
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: eyetrackdb-postgres:17-cron
     container_name: eyetrackdb-postgres
     restart: unless-stopped
+
+    # Explicit settings also upgrade volumes initialized with the stock image.
+    # Background workers avoid separate loopback password configuration for cron.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=eyetrackdb
+      - -c
+      - cron.timezone=Europe/Bucharest
+      - -c
+      - cron.use_background_workers=on
 
     environment:
       POSTGRES_DB: eyetrackdb

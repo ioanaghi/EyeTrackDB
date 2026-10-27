@@ -78,6 +78,15 @@ erDiagram
         double_precision gaze_origin_y "nullable"
         double_precision gaze_origin_z "nullable"
     }
+    etl_execution_logs {
+        bigint execution_id PK "required"
+        text pipeline_name "required"
+        timestamptz started_at "required"
+        timestamptz ended_at "nullable while running"
+        text status "required: running/succeeded/failed"
+        bigint processed_records "nullable; nonnegative"
+        text error_detail "nullable"
+    }
     staging_import_files ||--o{ staging_raw_gaze_data : contains
     staging_import_files ||--o| processed_sessions : sources
     processed_devices o|--o{ processed_sessions : identifies

@@ -12,13 +12,15 @@ The database must support raw data preservation, normalized storage, referential
 
 ## Current Implementation
 
-The following components have already been created:
+The following components are implemented and validated:
 
 - PostgreSQL 17 running in Docker.
 - Database `eyetrackdb`.
 - Schemas `staging`, `processed`, and `etl`.
 - Two staging tables and six processed tables.
-- Primary keys, foreign keys, and basic constraints.
+- Primary keys, foreign keys, metadata constraints, and rolled-back integrity tests.
+- CSV ingestion, normalized ETL, pg_cron scheduling and etl.execution_logs.
+- Integrated Docker image, including settings for existing data volumes.
 
 Existing file: `sql/create_tables.sql`.
 
@@ -127,9 +129,9 @@ sql/
 - [x] Normalization to 3NF is explained and justified.
 - [x] Primary and foreign key constraints are validated.
 - [x] Schema tests execute successfully.
-- [ ] ETL and automation changes are integrated.
-- [ ] Final Docker setup works on a clean environment.
-- [ ] Main README reflects the final implementation.
+- [x] ETL and automation changes are integrated.
+- [x] Final Docker setup works on a clean environment.
+- [x] Main README reflects the final implementation.
 
 ## Git Commands
 
@@ -199,7 +201,7 @@ The source diagram is [er-diagram.mmd](er-diagram.mmd). Open it with a Mermaid
 renderer. Entity names use underscores in place of schema dots for portability;
 `staging_import_files` denotes `staging.import_files`, for example.
 
-All eight tables and every implemented column are shown, with PK, FK and UK
+All eight staging/processed tables and every implemented column are shown, with PK, FK and UK
 markers. `||` means exactly one, `o|` zero or one, and `o{` zero or many.
 Each raw row belongs to one file. A file may have no processed session yet, or
 one session because import_file_id is unique. Each sample belongs to one session
@@ -208,6 +210,9 @@ An optional device, participant or task may serve many sessions. Samples may hav
 zero, one or two eye rows during loading; L/R and the composite primary key cap
 this relationship at two. ETL completion requires both eyes. No database CHECK
 requires two children, so the diagram explicitly distinguishes that postcondition.
+The final integration also adds etl.execution_logs as an independent entity without
+a domain FK. The extension-owned cron schema is inspected through pg_cron
+monitoring queries rather than treated as an application entity.
 
 ## Task 3 — Normalization from 1NF to 3NF
 
@@ -314,57 +319,67 @@ created with the final create_tables.sql. Applying the migration after that fres
 installation also succeeded, confirming it tolerates already-installed checks.
 
 
-## Task 5 — Integration progress and outstanding dependency
+## Task 5 — Completed integration (2026-10-27)
 
-Reviewed [Georgiana's PR #1](https://github.com/ioanaghi/EyeTrackDB/pull/1),
-merged into main on 2026-10-27, and its five task commits through f9bf888.
-The implementation retains the existing ETL column names and unique conflict
-targets, imports each file atomically, cleans values with source-aware errors,
-leaves unknown session metadata NULL and makes transformations repeatable.
-Integrated origin/feature/etl-pipeline into feature/database-design for validation.
-No changes were needed to the contributor's procedure to use the reviewed schema.
+Reviewed [Georgiana's PR #1](https://github.com/ioanaghi/EyeTrackDB/pull/1)
+and [Luca's PR #2](https://github.com/ioanaghi/EyeTrackDB/pull/2), both merged
+into main. Integrated main through 2156650 into feature/database-design. The
+logging wrapper delegates to the unchanged etl.run_pipeline() procedure, so the
+original manual ETL interface and its conflict targets remain compatible.
 
-Integration evidence on 2026-10-27:
+Compose builds the PostgreSQL 17 Bookworm/pg_cron image. Explicit command-line
+settings preload pg_cron, select eyetrackdb and Europe/Bucharest, and enable
+background workers. These settings also work with existing volumes initialized
+with the stock image; modifying postgresql.conf.sample alone would not update
+an existing cluster. Background workers avoid scheduler loopback credentials.
 
-- Started the repository's PostgreSQL 17 Compose service with a temporary override
-  selecting an independent project/container, port 5434 and a newly created volume.
-  The original running database and volume were not replaced.
-- Installed create_tables.sql and 03_etl_transform.sql with ON_ERROR_STOP.
-- Ran scripts/import_csv.py with psycopg 3.3.6 on both local recordings: 71,005
-  rows and 32,865 rows, respectively.
-- Compared all 21 raw fields against both CSV sources in row order: all 103,870
-  staging rows match their original strings.
-- Ran CALL etl.run_pipeline(), then repeated the importer: both files were skipped.
-- Passed 01_schema_tests.sql on the populated database and 02_etl_tests.sql,
-  including two repeated transformations, both eyes per sample, exact converted
-  values, optional metadata, missing-eye recovery and rollback on malformed input.
-- Final persisted counts after test rollbacks: 2 files, 103,870 raw rows,
-  2 sessions, 103,870 gaze samples and 207,740 eye measurements.
-- Stopped the isolated integration container after verification. Its review volume
-  remains available; the principal development container remains running.
-- Updated README with schema installation/upgrade, Python requirements, CSV import,
-  manual transformation, test commands and the current automation limitation.
+Setup order is create_tables.sql (or the integrity migration for an original
+installation), 03_etl_transform.sql, 04_enable_pg_cron.sql, 06_etl_logging.sql,
+then 05_schedule_jobs.sql. Logging must exist before scheduling its wrapper.
+The README documents the complete clean setup, existing-volume upgrade,
+CSV import, all test suites, direct/logged manual calls and monitoring queries.
 
-Task 5 is **not complete**. The latest fetched origin/feature/automation still
-points at e3ab282 (task documentation only); docker/Dockerfile is empty and there
-is no automation PR available for review. pg_cron setup, scheduling, execution
-logging and automation tests have not been delivered. The current Compose image
-is postgres:17, so no scheduled execution or execution log was claimed or tested.
-The manual Docker/ETL path is verified from a new volume; the complete automated
-Docker environment and final setup instructions must be verified after Luca's
-implementation is available (or implementation of that scope is authorized).
+Validation used an independent Compose project, port 5435 and a new empty volume:
 
-Remaining integration steps:
+- Built PostgreSQL 17 with the PGDG pg_cron package on ARM64; the container became
+  healthy. AMD64 was not exercised locally.
+- Installed the schema, ETL, extension and logging; installed the daily schedule
+  twice. Exactly one active eyetrackdb-daily-etl job remained at 0 2 * * * in
+  Europe/Bucharest, calling etl.run_pipeline_logged().
+- Imported both recordings (71,005 and 32,865 rows), ran the logged ETL and
+  repeated the importer, which skipped both filenames without duplicates.
+- Passed 01_schema_tests.sql, 02_etl_tests.sql and 03_automation_tests.sql,
+  including repeated transformations, optional metadata, missing values,
+  successful logging and rollback of malformed records.
+- Observed a real pg_cron execution using a temporary one-second smoke job.
+  cron.job_run_details reported succeeded and the committed pipeline log reported
+  succeeded with zero newly added samples. Removed the temporary job afterward;
+  the daily job retained its original 02:00 schedule.
+- Separately committed a malformed synthetic source, called the logging wrapper,
+  and verified a persisted failed log with raw-row context, NULL processed_records,
+  and no partial session or sample. Removed the synthetic source afterward.
+- Final committed counts remained 2 files, 103,870 raw rows, 2 sessions,
+  103,870 gaze samples and 207,740 eye measurements.
 
-1. Review and integrate Luca's automation PR, resolving its logging interface with
-   etl.run_pipeline() and updating Compose to the custom PostgreSQL 17 image.
-2. Build and start a clean complete environment, install the automation SQL in the
-   required order, then run schema, ETL and automation suites.
-3. Verify the active daily 02:00 job, explicit timezone, idempotent job setup,
-   execution logs and failure behavior; observe an actual scheduled execution.
-4. Recheck repeated pipeline execution and update the README to the final setup.
-5. Mark remaining acceptance criteria only after validation, push the completed
-   task 5, and create the single database-design PR targeting main.
+The earlier manual-ETL verification also compared all 21 raw fields of all
+103,870 rows against their CSV originals. No raw values or source files were
+changed by integration. Identity sequences may advance during rolled-back tests.
 
-The task 5 progress commit records only the completed ETL integration and its
-checks. The final database-design PR remains uncreated until all tasks finish.
+The live scheduler smoke run establishes scheduler functionality; the actual
+02:00 daily invocation was not awaited and is not claimed as observed. A
+scheduler result of succeeded alone is insufficient: the wrapper catches ETL
+errors to preserve the log, so etl.execution_logs.status is the pipeline result.
+An explicit outer transaction rollback can still remove transactional log rows.
+
+The principal local Compose environment was also upgraded using its existing
+volume, then initialized with the final ETL/automation SQL and both recordings.
+The logged import produced 103,870 samples. Switching its previous Linux base to
+Bookworm exposed a libc collation-version mismatch (2.41 versus 2.36); REINDEX
+DATABASE eyetrackdb followed by ALTER DATABASE eyetrackdb REFRESH COLLATION
+VERSION rebuilt its indexes and aligned the recorded version with the runtime.
+The README includes this maintenance step for affected existing volumes. The
+isolated review container was stopped after testing; the principal one remains
+healthy with the daily job active.
+
+Task 5 is complete. All database-design task commits and the final integration
+are pushed on feature/database-design before the single final PR targeting main.
