@@ -191,3 +191,20 @@ verified by integration tests; the two independent FKs alone do not enforce this
 business rule. Raw data and processed identifiers must be treated as immutable
 by the ETL interface. Stronger cross-table enforcement would require coordinated
 schema/procedure changes and is not claimed here.
+
+
+## Task 2 — Implemented ER diagram
+
+The source diagram is [er-diagram.mmd](er-diagram.mmd). Open it with a Mermaid
+renderer. Entity names use underscores in place of schema dots for portability;
+`staging_import_files` denotes `staging.import_files`, for example.
+
+All eight tables and every implemented column are shown, with PK, FK and UK
+markers. `||` means exactly one, `o|` zero or one, and `o{` zero or many.
+Each raw row belongs to one file. A file may have no processed session yet, or
+one session because import_file_id is unique. Each sample belongs to one session
+and one raw row; a raw row may have no sample yet or one because raw_id is unique.
+An optional device, participant or task may serve many sessions. Samples may have
+zero, one or two eye rows during loading; L/R and the composite primary key cap
+this relationship at two. ETL completion requires both eyes. No database CHECK
+requires two children, so the diagram explicitly distinguishes that postcondition.
