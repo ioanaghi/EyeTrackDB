@@ -1,10 +1,16 @@
+-- Fresh installations. Existing installations: sql/migrations/01_schema_integrity.sql.
+BEGIN;
+CREATE SCHEMA IF NOT EXISTS staging;
+CREATE SCHEMA IF NOT EXISTS processed;
+CREATE SCHEMA IF NOT EXISTS etl;
+
 -- STAGING: evidenta fisierelor CSV
 CREATE TABLE IF NOT EXISTS staging.import_files (
     import_file_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    filename TEXT NOT NULL UNIQUE,
-    imported_at TIMESTAMPTZ DEFAULT NOW(),
-    row_count INTEGER DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'pending'
+    filename TEXT NOT NULL UNIQUE CONSTRAINT import_files_filename_nonempty CHECK (btrim(filename) <> ''),
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    row_count INTEGER NOT NULL DEFAULT 0 CONSTRAINT import_files_row_count_nonnegative CHECK (row_count >= 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CONSTRAINT import_files_status_nonempty CHECK (btrim(status) <> '')
 );
 
 -- STAGING: date brute Tobii
@@ -41,21 +47,21 @@ CREATE TABLE IF NOT EXISTS staging.raw_gaze_data (
 -- PROCESSED: dispozitive
 CREATE TABLE IF NOT EXISTS processed.devices (
     device_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    model TEXT NOT NULL,
+    model TEXT NOT NULL CONSTRAINT devices_model_nonempty CHECK (btrim(model) <> ''),
     serial_number TEXT UNIQUE,
-    sampling_rate_hz INTEGER
+    sampling_rate_hz INTEGER CONSTRAINT devices_sampling_rate_positive CHECK (sampling_rate_hz > 0)
 );
 
 -- PROCESSED: participanti anonimi
 CREATE TABLE IF NOT EXISTS processed.participants (
     participant_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    participant_code TEXT NOT NULL UNIQUE
+    participant_code TEXT NOT NULL UNIQUE CONSTRAINT participants_code_nonempty CHECK (btrim(participant_code) <> '')
 );
 
 -- PROCESSED: activitati
 CREATE TABLE IF NOT EXISTS processed.tasks (
     task_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    task_name TEXT NOT NULL UNIQUE,
+    task_name TEXT NOT NULL UNIQUE CONSTRAINT tasks_name_nonempty CHECK (btrim(task_name) <> ''),
     description TEXT
 );
 
@@ -68,7 +74,8 @@ CREATE TABLE IF NOT EXISTS processed.sessions (
     participant_id BIGINT REFERENCES processed.participants(participant_id),
     task_id BIGINT REFERENCES processed.tasks(task_id),
     started_at TIMESTAMPTZ,
-    ended_at TIMESTAMPTZ
+    ended_at TIMESTAMPTZ,
+    CONSTRAINT sessions_time_order CHECK (ended_at >= started_at)
 );
 
 -- PROCESSED: esantioane
@@ -102,3 +109,5 @@ CREATE TABLE IF NOT EXISTS processed.eye_measurements (
 
 CREATE INDEX IF NOT EXISTS idx_gaze_session
     ON processed.gaze_samples(session_id);
+
+COMMIT;
