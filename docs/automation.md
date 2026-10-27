@@ -91,6 +91,33 @@ Bucharest daylight-saving rules, clock changes happen at 03:00/04:00, so this
 shifts by one hour between EET and EEST. Future time-zone rule changes follow
 the installed IANA time-zone data.
 
+The scheduler calls `etl.run_pipeline_logged()`, which delegates to
+`etl.run_pipeline()` and records the pipeline outcome. Apply
+`sql/06_etl_logging.sql` before installing/updating the scheduled job.
+
+## Task 4 — ETL Execution Logging
+
+`sql/06_etl_logging.sql` creates `etl.execution_logs` and the logging wrapper
+`etl.run_pipeline_logged()`. The wrapper inserts a running record, invokes
+Georgiana's unchanged `etl.run_pipeline()`, then records end time, status, and
+the increase in `processed.gaze_samples` as `processed_records`. That count is
+the number of newly materialized samples, so an idempotent rerun may correctly
+report zero.
+
+PostgreSQL rolls back statements inside the wrapper's exception subtransaction
+when the ETL call fails. The wrapper catches that error, stores its SQLSTATE,
+message, detail, and hint in the outer execution log row, and emits a warning.
+The wrapper therefore returns normally after a logged failure; inspect
+`etl.execution_logs.status` to determine pipeline success. As with any normal
+transactional table, an outer transaction rollback or server failure before
+commit can still remove the log. `cron.job_run_details` independently records
+whether the scheduled wrapper invocation ran, but its success status does not
+replace the pipeline status in `etl.execution_logs`.
+
+The integration interface for Georgiana is to keep `etl.run_pipeline()` as the
+ETL entry point; automation invokes it through `etl.run_pipeline_logged()`.
+This avoids modifying or duplicating the ETL transformation.
+
 ## Task 4 — ETL Execution Logging
 
 Create `sql/06_etl_logging.sql`.

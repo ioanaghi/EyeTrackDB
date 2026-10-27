@@ -16,7 +16,7 @@ BEGIN
     PERFORM cron.schedule(
         'eyetrackdb-daily-etl',
         '0 2 * * *',
-        'CALL etl.run_pipeline()'
+        'CALL etl.run_pipeline_logged()'
     );
 END;
 $$;
