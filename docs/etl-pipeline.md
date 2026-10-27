@@ -180,3 +180,30 @@ git push origin feature/etl-pipeline
 Create a Pull Request targeting `main`.
 
 Do not modify the existing table definitions without coordinating with the database architect.
+
+## Running the implementation
+
+### Task 1 — Import
+
+Create the schemas and tables using the README setup instructions first.
+Run the importer on the host, where the container's `/data` mount is `./data`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install 'psycopg[binary]>=3,<4'
+export PGHOST=127.0.0.1 PGPORT=5433 PGDATABASE=eyetrackdb PGUSER=eyetrack
+read -s PGPASSWORD
+export PGPASSWORD
+.venv/bin/python scripts/import_csv.py --data-dir ./data
+```
+
+`--dsn` or `DATABASE_URL` can also configure the connection; `DATA_DIR`
+sets the default source directory. Each file is registered and copied in one
+transaction. Failed files are rolled back, other files continue, and any failure
+returns a nonzero exit code. Empty files, wrong headers, malformed CSV and wrong
+field counts are rejected. Numeric strings, including empty strings and `nan`,
+are preserved verbatim for transformation.
+
+Deduplication uses the unique filename. Modified content with the same filename
+is skipped too; filename-only deduplication does not detect content changes.
+Existing registrations are skipped rather than overwritten.
