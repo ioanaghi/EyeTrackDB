@@ -159,14 +159,14 @@ docs/
 
 ## Acceptance Criteria
 
-- [ ] Both CSV files import successfully.
-- [ ] All original records are preserved in staging.
-- [ ] Invalid numeric measurements are handled correctly.
-- [ ] Session and eye measurement relationships are correct.
-- [ ] `etl.run_pipeline()` is implemented.
-- [ ] Repeated imports and transformations do not create duplicates.
-- [ ] SQL tests pass.
-- [ ] Import and transformation instructions are documented.
+- [x] Both CSV files import successfully.
+- [x] All original records are preserved in staging.
+- [x] Invalid numeric measurements are handled correctly.
+- [x] Session and eye measurement relationships are correct.
+- [x] `etl.run_pipeline()` is implemented.
+- [x] Repeated imports and transformations do not create duplicates.
+- [x] SQL tests pass.
+- [x] Import and transformation instructions are documented.
 
 ## Git Commands
 
@@ -235,3 +235,30 @@ constraints on filename, session source file, sample raw source and `(sample_id,
 eye)` enforce deduplication. Inserts use explicit conflict targets; already
 processed samples and eye measurements are skipped. Missing eye records can be
 filled on a later run. Existing processed values are not overwritten.
+
+### Task 5 — Validation
+
+After importing both files and running the transformation:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -f /sql/tests/02_etl_tests.sql
+```
+
+The suite requires the complete initial dataset. It checks exact counts, source
+links, duplicate prevention, both eyes, timestamp conversion, all measurement and
+validity conversions, missing values, numeric zero, repeat execution, missing-eye
+recovery and atomic rejection of malformed timestamps and measurements. Synthetic
+fixtures run in a transaction that is rolled back; failure stops `psql` with a
+nonzero exit code. Run this suite without concurrent imports or transformations.
+
+Verified locally on PostgreSQL 16 with the two original CSV files: 2 imported
+files, 103,870 staging rows, 2 sessions, 103,870 gaze samples and 207,740 eye
+measurements. Every raw field was compared against the source CSV values.
+Repeated imports were skipped, and malformed headers, empty files, incorrect
+field counts and broken CSV quoting left no partial registrations or raw rows.
+Missing directories produced a nonzero exit code. The SQL suite passed.
+The configured Docker PostgreSQL 17 instance was unavailable during verification
+because Docker was not running; the commands above run the same suite there.
+
+Delivery uses one commit and push per task on `feature/etl-pipeline`. A single
+Pull Request targets `main` after all five tasks; no push or merge to `main`.
