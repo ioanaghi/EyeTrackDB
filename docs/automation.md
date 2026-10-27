@@ -170,6 +170,37 @@ ORDER BY started_at DESC;
 `cron.job_run_details` describes the scheduled wrapper process; the execution
 log table is the source of truth for whether the ETL pipeline itself succeeded.
 
+## Task 6 — Manual Execution
+
+Run the ETL on demand from the repository root without waiting for 02:00:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  -c 'CALL etl.run_pipeline();'
+```
+
+To also capture the run in `etl.execution_logs`, use the monitoring wrapper:
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb \
+  -c 'CALL etl.run_pipeline_logged();'
+```
+
+For a logged run, verify the latest outcome and processed sample delta:
+
+```sql
+SELECT execution_id, started_at, ended_at, status,
+       processed_records, error_detail
+FROM etl.execution_logs
+ORDER BY execution_id DESC
+LIMIT 1;
+```
+
+The logged run succeeded only when its `status` is `succeeded`. A zero
+`processed_records` value can be expected on an idempotent run. For a direct
+`etl.run_pipeline()` call, verify the processed-table counts and inspect the
+PostgreSQL command result; direct calls do not write the wrapper's log row.
+
 ## Task 4 — ETL Execution Logging
 
 Create `sql/06_etl_logging.sql`.
