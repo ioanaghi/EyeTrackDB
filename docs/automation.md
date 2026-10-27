@@ -35,10 +35,13 @@ architectures. Build it with `docker build -f docker/Dockerfile -t eyetrackdb-po
 on a supported architecture (or use Docker Buildx for cross-platform builds).
 The image preloads `pg_cron` and sets `cron.database_name` to `eyetrackdb`.
 
-Compose integration for Ioana: change the `postgres` service from
-`image: postgres:17` to `build: { context: ., dockerfile: docker/Dockerfile }`
-or tag/use `eyetrackdb-postgres:17-cron`. Keep the current database environment,
-ports, volumes, and healthcheck. Recreate/restart the PostgreSQL container after
+Compose now builds `docker/Dockerfile` and tags the image
+`eyetrackdb-postgres:17-cron`. Its explicit PostgreSQL command sets
+`shared_preload_libraries=pg_cron`, `cron.database_name=eyetrackdb`,
+`cron.timezone=Europe/Bucharest`, and `cron.use_background_workers=on`.
+Background workers avoid loopback password setup. Command-line settings also
+apply when reusing a data volume initialized with the original stock image.
+The database environment, ports, volumes, and healthcheck are retained. Recreate/restart the PostgreSQL container after
 changing `shared_preload_libraries`; PostgreSQL only loads that library at
 server startup. This change does not require deleting the existing volume.
 
@@ -83,9 +86,9 @@ The ETL procedure itself is implemented by Georgiana.
 
 `sql/05_schedule_jobs.sql` replaces any existing job named
 `eyetrackdb-daily-etl` before creating the single daily job. It runs
-`CALL etl.run_pipeline()` at 02:00 in the explicitly configured
+`CALL etl.run_pipeline_logged()` at 02:00 in the explicitly configured
 `Europe/Bucharest` timezone. The setup script must be run as a PostgreSQL
-superuser in `eyetrackdb` after the procedure is installed. Under current
+superuser in `eyetrackdb` after both the ETL and logging procedures are installed. Under current
 Bucharest daylight-saving rules, clock changes happen at 03:00/04:00, so this
 02:00 wall-clock schedule occurs once each local calendar day; its UTC time
 shifts by one hour between EET and EEST. Future time-zone rule changes follow
@@ -192,15 +195,15 @@ docs/
 
 ## Acceptance Criteria
 
-- [ ] PostgreSQL Docker image builds successfully.
-- [ ] `pg_cron` extension is installed and enabled.
-- [ ] Daily ETL job is scheduled for 02:00.
-- [ ] Scheduling setup is idempotent.
-- [ ] Job history can be inspected.
-- [ ] Execution logging is implemented.
-- [ ] Manual ETL execution works after integration.
-- [ ] Automation tests pass.
-- [ ] Docker setup and troubleshooting are documented.
+- [x] PostgreSQL Docker image builds successfully.
+- [x] `pg_cron` extension is installed and enabled.
+- [x] Daily ETL job is scheduled for 02:00.
+- [x] Scheduling setup is idempotent.
+- [x] Job history can be inspected.
+- [x] Execution logging is implemented.
+- [x] Manual ETL execution works after integration.
+- [x] Automation tests pass.
+- [x] Docker setup and troubleshooting are documented.
 
 ## Git Commands
 
@@ -340,3 +343,17 @@ successful and failed execution logging. It uses valid and malformed synthetic
 rows to check commit and rollback behavior, then rolls its fixture and log rows
 back. It does not assert that a daily scheduled run has happened or succeeded;
 use `cron.job_run_details` to establish an observed scheduled execution.
+
+
+## Final integration validation — 2026-10-27
+
+PR #2 was reviewed and integrated into feature/database-design. The PostgreSQL 17
+image built successfully on ARM64 and ran from a new Docker volume. The extension,
+Europe/Bucharest timezone, background-worker mode and single active daily 02:00
+job were verified. Applying the scheduling script twice left one named job.
+All three SQL suites passed with the complete dataset (103,870 gaze samples and
+207,740 eye measurements). A separate committed failure check retained its error
+log without partial processed rows. A temporary one-second pg_cron smoke job
+actually executed successfully, with matching scheduler history and ETL success
+log; it was removed afterward. The 02:00 daily invocation was not awaited. AMD64
+was not tested locally. See README for the final installation order and commands.

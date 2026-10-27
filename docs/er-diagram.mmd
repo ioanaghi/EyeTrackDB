@@ -1,0 +1,97 @@
+erDiagram
+    %% SQL permits 0..2 eyes per sample; ETL produces exactly L and R.
+    %% Optional metadata FK columns are nullable.
+    staging_import_files {
+        bigint import_file_id PK "required"
+        text filename UK "required"
+        timestamptz imported_at "required"
+        integer row_count "required"
+        varchar(20) status "required"
+    }
+    staging_raw_gaze_data {
+        bigint raw_id PK "required"
+        bigint import_file_id FK "required"
+        text system_time_stamp "nullable"
+        text device_time_stamp "nullable"
+        text timestamp_utc "nullable"
+        text left_gaze_x "nullable"
+        text left_gaze_y "nullable"
+        text left_gaze_validity "nullable"
+        text left_pupil_diameter "nullable"
+        text left_pupil_validity "nullable"
+        text left_gaze_origin_validity "nullable"
+        text left_gaze_origin_x "nullable"
+        text left_gaze_origin_y "nullable"
+        text left_gaze_origin_z "nullable"
+        text right_gaze_x "nullable"
+        text right_gaze_y "nullable"
+        text right_gaze_validity "nullable"
+        text right_pupil_diameter "nullable"
+        text right_pupil_validity "nullable"
+        text right_gaze_origin_validity "nullable"
+        text right_gaze_origin_x "nullable"
+        text right_gaze_origin_y "nullable"
+        text right_gaze_origin_z "nullable"
+    }
+    processed_devices {
+        bigint device_id PK "required"
+        text model "required"
+        text serial_number UK "nullable"
+        integer sampling_rate_hz "nullable"
+    }
+    processed_participants {
+        bigint participant_id PK "required"
+        text participant_code UK "required"
+    }
+    processed_tasks {
+        bigint task_id PK "required"
+        text task_name UK "required"
+        text description "nullable"
+    }
+    processed_sessions {
+        bigint session_id PK "required"
+        bigint import_file_id FK,UK "required"
+        bigint device_id FK "nullable"
+        bigint participant_id FK "nullable"
+        bigint task_id FK "nullable"
+        timestamptz started_at "nullable"
+        timestamptz ended_at "nullable"
+    }
+    processed_gaze_samples {
+        bigint sample_id PK "required"
+        bigint session_id FK "required"
+        bigint raw_id FK,UK "required"
+        bigint system_timestamp "nullable"
+        bigint device_timestamp "nullable"
+        timestamptz callback_timestamp "nullable"
+    }
+    processed_eye_measurements {
+        bigint sample_id PK,FK "required"
+        char(1) eye PK "required"
+        double_precision gaze_x "nullable"
+        double_precision gaze_y "nullable"
+        boolean gaze_valid "nullable"
+        double_precision pupil_diameter "nullable"
+        boolean pupil_valid "nullable"
+        boolean gaze_origin_valid "nullable"
+        double_precision gaze_origin_x "nullable"
+        double_precision gaze_origin_y "nullable"
+        double_precision gaze_origin_z "nullable"
+    }
+    etl_execution_logs {
+        bigint execution_id PK "required"
+        text pipeline_name "required"
+        timestamptz started_at "required"
+        timestamptz ended_at "nullable while running"
+        text status "required: running/succeeded/failed"
+        bigint processed_records "nullable; nonnegative"
+        text error_detail "nullable"
+    }
+    staging_import_files ||--o{ staging_raw_gaze_data : contains
+    staging_import_files ||--o| processed_sessions : sources
+    processed_devices o|--o{ processed_sessions : identifies
+    processed_participants o|--o{ processed_sessions : participates
+    processed_tasks o|--o{ processed_sessions : describes
+    processed_sessions ||--o{ processed_gaze_samples : contains
+    staging_raw_gaze_data ||--o| processed_gaze_samples : transforms_into
+    processed_gaze_samples ||--o{ processed_eye_measurements : "has 0..2 (L/R)"

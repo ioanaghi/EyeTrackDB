@@ -1,0 +1,2 @@
+# Host-side CSV ingestion
+psycopg[binary]>=3,<4
