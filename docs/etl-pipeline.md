@@ -218,3 +218,12 @@ docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackd
 Each imported file produces one session, each raw row one gaze sample, and each
 sample two eye measurements. Optional session metadata remains unknown (`NULL`).
 Callback timestamps use `to_timestamp()` on Unix seconds; source links use `raw_id`.
+
+### Task 3 — Cleaning
+
+Empty numeric fields and case-insensitive `nan` become `NULL`, while zero remains
+zero. Validity accepts `0`/`1` and `false`/`true`; missing validity remains unknown.
+Invalid measurements are retained even when their validity indicator is false.
+Malformed integers, timestamps, booleans, nonnumeric values and infinities reject
+the whole transformation atomically, with an error identifying `raw_id`, column
+and original value. Staging values remain unchanged for investigation.
