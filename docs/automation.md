@@ -52,6 +52,13 @@ The configuration must support:
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 ```
 
+`sql/04_enable_pg_cron.sql` installs and verifies the extension in
+`cron.database_name` (configured as `eyetrackdb` by the custom image). Run it
+as a database superuser after connecting to `eyetrackdb`. `pg_cron` must be in
+`shared_preload_libraries`; changing that setting requires a PostgreSQL
+container restart before the extension can be created. Verify with
+`SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_cron';`.
+
 Document the required PostgreSQL configuration and container restart behavior.
 
 Verify that the extension is installed in the intended database.
