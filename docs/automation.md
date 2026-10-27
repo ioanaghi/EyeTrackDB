@@ -118,6 +118,58 @@ The integration interface for Georgiana is to keep `etl.run_pipeline()` as the
 ETL entry point; automation invokes it through `etl.run_pipeline_logged()`.
 This avoids modifying or duplicating the ETL transformation.
 
+## Task 5 — Monitoring
+
+Check that the named job exists, is active, and see its most recent scheduler
+run:
+
+```sql
+SELECT j.jobid, j.jobname, j.schedule, j.command, j.active,
+       r.start_time AS last_started_at, r.end_time AS last_ended_at,
+       r.status AS last_scheduler_status, r.return_message
+FROM cron.job AS j
+LEFT JOIN LATERAL (
+    SELECT start_time, end_time, status, return_message
+    FROM cron.job_run_details
+    WHERE jobid = j.jobid
+    ORDER BY start_time DESC NULLS LAST
+    LIMIT 1
+) AS r ON true
+WHERE j.jobname = 'eyetrackdb-daily-etl';
+```
+
+Inspect recent scheduler history (including reported errors):
+
+```sql
+SELECT jobid, runid, database, username, command, status,
+       return_message, start_time, end_time
+FROM cron.job_run_details
+ORDER BY start_time DESC
+LIMIT 10;
+```
+
+Inspect pipeline-level results and failures recorded by the wrapper:
+
+```sql
+SELECT execution_id, pipeline_name, started_at, ended_at, status,
+       processed_records, error_detail
+FROM etl.execution_logs
+ORDER BY started_at DESC
+LIMIT 20;
+```
+
+Filter to pipeline failures:
+
+```sql
+SELECT execution_id, started_at, ended_at, error_detail
+FROM etl.execution_logs
+WHERE status = 'failed'
+ORDER BY started_at DESC;
+```
+
+`cron.job_run_details` describes the scheduled wrapper process; the execution
+log table is the source of truth for whether the ETL pipeline itself succeeded.
+
 ## Task 4 — ETL Execution Logging
 
 Create `sql/06_etl_logging.sql`.
