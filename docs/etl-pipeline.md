@@ -207,3 +207,14 @@ are preserved verbatim for transformation.
 Deduplication uses the unique filename. Modified content with the same filename
 is skipped too; filename-only deduplication does not detect content changes.
 Existing registrations are skipped rather than overwritten.
+
+### Task 2 — Transformation
+
+```bash
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -f /sql/03_etl_transform.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U eyetrack -d eyetrackdb -c 'CALL etl.run_pipeline();'
+```
+
+Each imported file produces one session, each raw row one gaze sample, and each
+sample two eye measurements. Optional session metadata remains unknown (`NULL`).
+Callback timestamps use `to_timestamp()` on Unix seconds; source links use `raw_id`.
