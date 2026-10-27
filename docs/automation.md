@@ -28,6 +28,20 @@ Do not replace PostgreSQL 17 with a different major version without approval.
 
 The existing `docker-compose.yml` is managed by Ioana. Document the changes required to use the custom image so they can be integrated centrally.
 
+Implementation: `docker/Dockerfile` extends the official `postgres:17-bookworm`
+image and installs `postgresql-17-cron` from the PostgreSQL Apt (PGDG)
+repository. PGDG provides packages for supported AMD64 and ARM64 Debian
+architectures. Build it with `docker build -f docker/Dockerfile -t eyetrackdb-postgres:17-cron .`
+on a supported architecture (or use Docker Buildx for cross-platform builds).
+The image preloads `pg_cron` and sets `cron.database_name` to `eyetrackdb`.
+
+Compose integration for Ioana: change the `postgres` service from
+`image: postgres:17` to `build: { context: ., dockerfile: docker/Dockerfile }`
+or tag/use `eyetrackdb-postgres:17-cron`. Keep the current database environment,
+ports, volumes, and healthcheck. Recreate/restart the PostgreSQL container after
+changing `shared_preload_libraries`; PostgreSQL only loads that library at
+server startup. This change does not require deleting the existing volume.
+
 ## Task 2 — Enable pg_cron
 
 Create `sql/04_enable_pg_cron.sql`.
